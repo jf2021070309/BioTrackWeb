@@ -1,20 +1,16 @@
+require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const swaggerUi = require("swagger-ui-express");
 const swaggerJsdoc = require("swagger-jsdoc");
 const { sequelize, AsistenciaProcesada, Empleado, RegistroCrudo } = require("./models");
 const { syncClockData, importUsers, updateClockUser, getClockAdmins, syncClockTime, getClockUsers, deleteClockUser } = require("./services/zkService");
-require("dotenv").config();
 
 const app = express();
 
-// --- ESCUDO CONTRA CRASHES DEL HARDWARE ---
-// La librería node-zklib tiene bugs que pueden tirar el servidor.
+// --- ESCUDO CONTRA CRASHES ---
 process.on('uncaughtException', (error) => {
-    console.error('❌ ERROR CRÍTICO ATRAPADO:', error.message);
-    if (error.stack?.includes('node-zklib')) {
-        console.error('⚠️ El error proviene de la librería del reloj. El servidor seguirá funcionando.');
-    }
+    console.error('❌ ERROR CRÍTICO:', error.message);
 });
 process.on('unhandledRejection', (reason) => {
     console.error('❌ PROMESA NO MANEJADA:', reason);
@@ -41,39 +37,16 @@ const swaggerOptions = {
 const swaggerDocs = swaggerJsdoc(swaggerOptions);
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocs));
 
-/**
- * @openapi
- * /:
- *   get:
- *     tags: [General]
- *     summary: Página de bienvenida
- *     responses:
- *       200:
- *         description: Servidor Online
- */
 app.get("/", (req, res) => {
     res.send(`
         <div style="font-family: sans-serif; text-align: center; padding: 50px;">
             <h1 style="color: #2563eb;">BioTrack API v1.0</h1>
-            <p style="color: #64748b;">Servidor funcionando correctamente y conectado al hardware.</p>
+            <p style="color: #64748b;">Servidor funcionando correctamente.</p>
             <a href="/api-docs" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: white; border-radius: 10px; text-decoration: none; font-weight: bold;">Ver Documentación Swagger</a>
         </div>
     `);
 });
 
-/**
- * @openapi
- * /api/empleados:
- *   get:
- *     tags: [Empleados]
- *     summary: Listar todos los empleados
- *     responses:
- *       200:
- *         description: Lista de empleados
- *   post:
- *     tags: [Empleados]
- *     summary: Crear nuevo empleado
- */
 app.get("/api/empleados", async (req, res) => {
     res.json(await Empleado.findAll({ order: [["uid_reloj", "ASC"]] }));
 });
@@ -82,24 +55,6 @@ app.post("/api/empleados", async (req, res) => {
     try { res.json(await Empleado.create(req.body)); } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-/**
- * @openapi
- * /api/empleados/{id}:
- *   put:
- *     tags: [Empleados]
- *     summary: Actualizar datos de un empleado
- *   delete:
- *     tags: [Empleados]
- *     summary: Eliminar un empleado (Web y Hardware)
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema: { type: integer }
- *     responses:
- *       200:
- *         description: Eliminado de ambos sitios
- */
 app.put("/api/empleados/:id", async (req, res) => {
     try {
         const empleado = await Empleado.findByPk(req.params.id);
@@ -113,22 +68,13 @@ app.delete("/api/empleados/:id", async (req, res) => {
     try {
         const empleado = await Empleado.findByPk(req.params.id);
         if (empleado) {
-            // 1. Intentar borrar del reloj físico
             await deleteClockUser(empleado.uid_reloj);
-            // 2. Borrar de la base de datos
             await empleado.destroy();
         }
         res.json({ message: "Eliminado de la web y del reloj" });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-/**
- * @openapi
- * /api/stats:
- *   get:
- *     tags: [Estadísticas]
- *     summary: Estadísticas del Dashboard
- */
 app.get("/api/stats", async (req, res) => {
     try {
         const { fecha } = req.query;
@@ -163,7 +109,7 @@ app.get("/api/stats", async (req, res) => {
 app.get("/api/asistencias", async (req, res) => {
     const { fecha, desde, hasta } = req.query;
     const { Op } = require("sequelize");
-    
+
     let where = {};
     if (fecha) {
         where.fecha = fecha;
@@ -171,26 +117,19 @@ app.get("/api/asistencias", async (req, res) => {
         where.fecha = { [Op.between]: [desde, hasta] };
     }
 
-    res.json(await AsistenciaProcesada.findAll({ 
+    res.json(await AsistenciaProcesada.findAll({
         where,
-        include: [Empleado], 
-        order: [["fecha", "DESC"], ["hora_entrada", "ASC"]] 
+        include: [Empleado],
+        order: [["fecha", "DESC"], ["hora_entrada", "ASC"]]
     }));
 });
 
-/**
- * @openapi
- * /api/reloj/usuarios:
- *   get:
- *     tags: [Hardware K14]
- *     summary: Listar usuarios directamente del reloj
- */
 app.get("/api/reloj/usuarios", async (req, res) => {
-    try { 
+    try {
         const users = await getClockUsers();
-        res.json(users || []); 
-    } catch (e) { 
-        res.status(500).json({ error: e.message }); 
+        res.json(users || []);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
     }
 });
 
@@ -201,17 +140,17 @@ app.put("/api/reloj/usuarios/:uid", async (req, res) => {
 });
 
 app.get("/api/reloj/admins", async (req, res) => {
-    try { res.json(await getClockAdmins()); } 
+    try { res.json(await getClockAdmins()); }
     catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post("/api/reloj/sync-hora", async (req, res) => {
-    try { res.json({ hora: await syncClockTime() }); } 
+    try { res.json({ hora: await syncClockTime() }); }
     catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post("/api/sync", async (req, res) => {
-    try { await syncClockData(); res.json({ message: "Ok" }); } 
+    try { await syncClockData(); res.json({ message: "Ok" }); }
     catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -221,19 +160,13 @@ app.post("/api/importar-empleados", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-sequelize.sync().then(() => {
-    app.listen(PORT, () => {
-        console.log(`🚀 Servidor BioTrack en puerto ${PORT}`);
-        
-        // Iniciar tarea de sincronización automática (cada 60 segundos)
-        console.log("🕒 Tarea de auto-sincronización activada (60s)");
-        setInterval(async () => {
-            try {
-                // El log de "Iniciando" solo se verá en la consola del servidor
-                await syncClockData();
-            } catch (error) {
-                console.error("Error en auto-sincronización:", error.message);
-            }
-        }, 60000);
-    });
+
+// EL ANCLA: Este intervalo evita que el proceso de Node termine.
+setInterval(() => {}, 1000 * 60 * 60); 
+
+app.listen(PORT, () => {
+    console.log(`🚀 Servidor BioTrack en puerto ${PORT}`);
+    sequelize.sync()
+        .then(() => console.log("✅ Base de datos sincronizada"))
+        .catch(err => console.error("❌ Error DB:", err.message));
 });

@@ -16,7 +16,7 @@ const acquireLock = async (retryCount = 0) => {
 
 const releaseLock = async () => {
     // Pequeño tiempo de espera antes de liberar para que el reloj "respire"
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise(r => setTimeout(r, 1500));
     hardwareBusy = false;
 };
 
@@ -24,8 +24,8 @@ const createZkInstance = () => {
     return new ZKLib(
         String(process.env.RELOJ_IP || "").trim(),
         parseInt(process.env.RELOJ_PORT, 10),
-        10000, // timeout
-        4000   // inportant: keep-alive timeout
+        20000, // Aumentamos a 20s
+        4000   // Reducimos el inport timeout para que sea más ágil en reintentos
     );
 };
 
@@ -37,6 +37,23 @@ const safeDisconnect = async (zkInstance) => {
     } catch (error) {}
 };
 
+const connectWithRetry = async (zkInstance, maxRetries = 2) => {
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            console.log(`Intentando conectar (TCP/UDP) - Intento ${i + 1}...`);
+            await zkInstance.createSocket();
+            return true;
+        } catch (e) {
+            console.warn(`Intento ${i + 1} fallido: ${e.message}`);
+            
+            // Si es el último intento, probamos forzar un cierre antes de rendirnos
+            if (i === maxRetries - 1) throw e;
+            
+            await new Promise(r => setTimeout(r, 1000));
+        }
+    }
+};
+
 const cleanClockUid = (value) => {
     return value ? String(value).trim() : null;
 };
@@ -45,9 +62,11 @@ const getClockUsers = async () => {
     await acquireLock();
     let zkInstance = createZkInstance();
     try {
-        await zkInstance.createSocket();
+        await connectWithRetry(zkInstance);
+        // Darle un respiro al hardware tras conectar
+        await new Promise(r => setTimeout(r, 1000));
         const users = await zkInstance.getUsers();
-        return users.data;
+        return users.data || [];
     } catch (e) {
         console.error("Error obteniendo usuarios:", e?.message || e || "Error desconocido");
         return [];
@@ -66,8 +85,10 @@ const importUsers = async () => {
     await acquireLock();
     let zkInstance = createZkInstance();
     try {
-        await zkInstance.createSocket();
+        await connectWithRetry(zkInstance);
+        await new Promise(r => setTimeout(r, 1000));
         const users = await zkInstance.getUsers();
+        if (!users || !users.data) throw new Error("No se recibieron datos de usuarios");
         for (let user of users.data) {
             const uid = cleanClockUid(user.userId);
             if (!uid) continue;
@@ -94,10 +115,12 @@ const syncClockData = async () => {
     await acquireLock();
     let zkInstance = createZkInstance();
     try {
-        await zkInstance.createSocket();
+        await connectWithRetry(zkInstance);
+        await new Promise(r => setTimeout(r, 1000));
         
         // 1. Sincronizar usuarios primero
         const users = await zkInstance.getUsers();
+        if (!users || !users.data) throw new Error("No se pudieron obtener usuarios");
         for (let user of users.data) {
             const uid = cleanClockUid(user.userId);
             if (!uid) continue;
@@ -115,6 +138,10 @@ const syncClockData = async () => {
 
         // 2. Traer marcaciones
         const logs = await zkInstance.getAttendances();
+        if (!logs || !logs.data) {
+             console.log("No hay marcaciones nuevas o el reloj no respondió.");
+             return;
+        }
         for (let log of logs.data) {
             const uid = cleanClockUid(log.deviceUserId);
             if (!uid) continue;
@@ -232,7 +259,7 @@ const syncClockTime = async () => {
     await acquireLock();
     let zkInstance = createZkInstance();
     try {
-        await zkInstance.createSocket();
+        await connectWithRetry(zkInstance);
         const now = new Date();
         await zkInstance.setTime(now);
         return now;
@@ -264,7 +291,7 @@ const updateClockUser = async (userId, name, password = "", role = 0, cardno = 0
     await acquireLock();
     let zkInstance = createZkInstance();
     try {
-        await zkInstance.createSocket();
+        await connectWithRetry(zkInstance);
         
         const users = await zkInstance.getUsers();
         let internalUid = 0;
@@ -294,7 +321,7 @@ const deleteClockUser = async (userId) => {
     await acquireLock();
     let zkInstance = createZkInstance();
     try {
-        await zkInstance.createSocket();
+        await connectWithRetry(zkInstance);
         
         await zkInstance.disableDevice();
         
