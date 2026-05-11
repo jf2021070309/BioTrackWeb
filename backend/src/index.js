@@ -52,14 +52,21 @@ app.get("/api/empleados", async (req, res) => {
 });
 
 app.post("/api/empleados", async (req, res) => {
-    try { res.json(await Empleado.create(req.body)); } catch (e) { res.status(500).json({ error: e.message }); }
+    try { 
+        // Forzamos que empiece como NO sincronizado para que el worker lo suba
+        const data = { ...req.body, sincronizado_reloj: false };
+        res.json(await Empleado.create(data)); 
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.put("/api/empleados/:id", async (req, res) => {
     try {
         const empleado = await Empleado.findByPk(req.params.id);
         if (!empleado) return res.status(404).json({ error: "No encontrado" });
-        await empleado.update(req.body);
+        
+        // Al editar, marcamos como NO sincronizado para que el worker actualice el reloj
+        const data = { ...req.body, sincronizado_reloj: false };
+        await empleado.update(data);
         res.json(empleado);
     } catch (e) { res.status(500).json({ error: e.message }); }
 });

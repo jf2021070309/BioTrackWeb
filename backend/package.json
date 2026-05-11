@@ -16,6 +16,7 @@
     "express": "^5.2.1",
     "mysql2": "^3.22.3",
     "node-cron": "^4.2.1",
+    "proper-lockfile": "^4.1.2",
     "sequelize": "^6.37.8",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
