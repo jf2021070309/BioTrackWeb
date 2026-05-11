@@ -71,21 +71,26 @@ const syncClockData = async () => {
 
             for (const log of logs) {
                 const uid = cleanClockUid(log.deviceUserId);
+                if (!uid || uid === "" || uid.includes('\x00')) continue; // Saltar basura
+
                 const ts = new Date(log.recordTime);
                 
                 // Guardar log crudo si no existe
-                const [record, created] = await RegistroCrudo.findOrCreate({
+                await RegistroCrudo.findOrCreate({
                     where: {
                         uid_reloj: uid,
                         timestamp: ts
                     }
                 });
 
-                if (created) uidsInvolucrados.add(uid);
+                // Si la marcación es de hoy, la incluimos para procesar
+                if (log.recordTime.includes(fechaActual) || ts.toISOString().startsWith(fechaActual)) {
+                    uidsInvolucrados.add(uid);
+                }
             }
 
-            // 3. Procesar asistencia para los UIDs que tuvieron nuevos registros hoy
-            console.log(`⚙️ Procesando asistencia para ${uidsInvolucrados.size} empleados...`);
+            // 3. Procesar asistencia
+            console.log(`⚙️ Procesando asistencia para ${uidsInvolucrados.size} empleados... (${Array.from(uidsInvolucrados).join(', ')})`);
             for (const uid of uidsInvolucrados) {
                 await procesarAsistencias(uid, fechaActual);
             }
@@ -105,16 +110,21 @@ const procesarAsistencias = async (uid, fecha) => {
         const emp = await Empleado.findOne({ where: { uid_reloj: uid } });
         if (!emp) return;
 
+        const [year, month, day] = fecha.split("-").map(Number);
+        const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0);
+        const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
+
         const registros = await RegistroCrudo.findAll({ 
             where: { 
                 uid_reloj: uid,
                 timestamp: {
-                    [Op.gte]: new Date(fecha + "T00:00:00"),
-                    [Op.lte]: new Date(fecha + "T23:59:59")
+                    [Op.between]: [startOfDay, endOfDay]
                 }
             }, 
             order: [["timestamp", "ASC"]] 
         });
+
+        console.log(`🔍 [DEBUG] UID ${uid} en fecha ${fecha}: ${registros.length} registros encontrados.`);
         
         if (registros.length > 0) {
             const entrada = registros[0].timestamp;
@@ -134,23 +144,29 @@ const procesarAsistencias = async (uid, fecha) => {
                 estado = "TARDE";
             }
 
-            const formatTime = (date) => {
-                const h = String(date.getHours()).padStart(2, '0');
-                const m = String(date.getMinutes()).padStart(2, '0');
-                return `${h}:${m}`;
-            };
+            // Buscar si ya existe la asistencia para este empleado y fecha
+            let asistencia = await AsistenciaProcesada.findOne({
+                where: { uid_reloj: uid, fecha: fecha }
+            });
 
-            await AsistenciaProcesada.upsert({
-                id: `${uid}-${fecha}`,
+            const datosAsistencia = {
                 uid_reloj: uid,
                 fecha: fecha,
-                hora_entrada: formatTime(entrada),
-                hora_salida: registros.length > 1 ? formatTime(salida) : null,
+                hora_entrada: entrada,
+                hora_salida: registros.length > 1 ? salida : null,
                 horas_totales: registros.length > 1 ? diffHrs.toFixed(2) : 0,
-                estado: esTarde ? "TARDE" : (registros.length === 1 ? "PRESENTE" : "PRESENTE"),
+                estado: esTarde ? "TARDE" : (registros.length === 1 ? "INCOMPLETO" : "PRESENTE"),
                 cumplio_jornada: diffHrs >= horasRequeridas,
                 empleadoId: emp.id
-            });
+            };
+
+            if (asistencia) {
+                await asistencia.update(datosAsistencia);
+                console.log(`✅ Asistencia ACTUALIZADA para UID ${uid}`);
+            } else {
+                await AsistenciaProcesada.create(datosAsistencia);
+                console.log(`✨ Asistencia CREADA para UID ${uid}`);
+            }
         }
     } catch (error) {
         console.error(`❌ Error procesando asistencia UID ${uid}:`, error.message);
@@ -160,12 +176,14 @@ const procesarAsistencias = async (uid, fecha) => {
 const syncClockTime = async () => {
     return await withDevice(async (zk) => {
         const now = new Date();
-        // Codificación de fecha para protocolo ZK (202 = CMD_SET_TIME)
-        const encoded = ((now.getFullYear() % 100) * 12 * 31 + now.getMonth() * 31 + now.getDate() - 1) * (24 * 60 * 60) +
-                        (now.getHours() * 60 + now.getMinutes()) * 60 + now.getSeconds();
-        const buf = Buffer.alloc(4);
-        buf.writeUInt32LE(encoded, 0);
-        
+        const buf = Buffer.alloc(6);
+        buf.writeUInt8(now.getFullYear() % 100, 0);
+        buf.writeUInt8(now.getMonth() + 1, 1);
+        buf.writeUInt8(now.getDate(), 2);
+        buf.writeUInt8(now.getHours(), 3);
+        buf.writeUInt8(now.getMinutes(), 4);
+        buf.writeUInt8(now.getSeconds(), 5);
+
         await zk.executeCmd(202, buf);
         console.log("✅ Hora sincronizada:", now.toLocaleString());
         return now;
