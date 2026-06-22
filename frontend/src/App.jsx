@@ -77,13 +77,6 @@ function App() {
 
   useEffect(() => { 
     fetchAsistencias(selectedDate); 
-    
-    // Auto-refrescar la UI cada 60 segundos para mostrar las nuevas marcaciones automáticas
-    const interval = setInterval(() => {
-      fetchAsistencias(selectedDate);
-    }, 60000);
-
-    return () => clearInterval(interval);
   }, [selectedDate]);
 
   return (

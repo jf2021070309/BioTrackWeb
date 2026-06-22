@@ -239,7 +239,6 @@ const Dashboard = ({
                              </div>
                              <div>
                                 <p className="font-black text-gray-900 leading-tight">{a.Empleado?.nombre || `ID: ${a.uid_reloj}`}</p>
-                                <p className="text-xs text-gray-400 font-bold uppercase tracking-tighter">{a.Empleado?.cargo || "Sin Cargo"}</p>
                              </div>
                           </div>
                         </td>
@@ -314,7 +313,6 @@ const Dashboard = ({
                     </div>
                     <div>
                        <p className="font-black text-xs text-gray-900">{empleado.nombre}</p>
-                       <p className="text-[9px] text-red-400 font-black uppercase">{empleado.cargo || "Sin Cargo"}</p>
                     </div>
                   </div>
                 )) : (

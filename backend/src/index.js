@@ -4,7 +4,7 @@ const cors = require("cors");
 const swaggerUi = require("swagger-ui-express");
 const swaggerJsdoc = require("swagger-jsdoc");
 const { sequelize, AsistenciaProcesada, Empleado, RegistroCrudo } = require("./models");
-const { syncClockData, importUsers, updateClockUser, getClockAdmins, syncClockTime, getClockUsers, deleteClockUser } = require("./services/zkService");
+const { syncClockData, importUsers, getClockAdmins, syncClockTime, getClockUsers } = require("./services/zkService");
 
 const app = express();
 
@@ -53,8 +53,8 @@ app.get("/api/empleados", async (req, res) => {
 
 app.post("/api/empleados", async (req, res) => {
     try { 
-        // Forzamos que empiece como NO sincronizado para que el worker lo suba
-        const data = { ...req.body, sincronizado_reloj: false };
+        // Solo guarda en la web. No sincroniza con el reloj.
+        const data = { ...req.body, sincronizado_reloj: true };
         res.json(await Empleado.create(data)); 
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -64,8 +64,8 @@ app.put("/api/empleados/:id", async (req, res) => {
         const empleado = await Empleado.findByPk(req.params.id);
         if (!empleado) return res.status(404).json({ error: "No encontrado" });
         
-        // Al editar, marcamos como NO sincronizado para que el worker actualice el reloj
-        const data = { ...req.body, sincronizado_reloj: false };
+        // Solo edita en la base de datos local
+        const data = { ...req.body, sincronizado_reloj: true };
         await empleado.update(data);
         res.json(empleado);
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -75,10 +75,9 @@ app.delete("/api/empleados/:id", async (req, res) => {
     try {
         const empleado = await Empleado.findByPk(req.params.id);
         if (empleado) {
-            await deleteClockUser(empleado.uid_reloj);
             await empleado.destroy();
         }
-        res.json({ message: "Eliminado de la web y del reloj" });
+        res.json({ message: "Eliminado solo de la web" });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -140,11 +139,7 @@ app.get("/api/reloj/usuarios", async (req, res) => {
     }
 });
 
-app.put("/api/reloj/usuarios/:uid", async (req, res) => {
-    const { userId, name, password, role, cardno } = req.body;
-    const success = await updateClockUser(userId, name, password, role, cardno);
-    res.json({ message: success ? "Actualizado" : "Error" });
-});
+// app.put("/api/reloj/usuarios/:uid", async (req, res) => { ... }); eliminado para evitar escrituras
 
 app.get("/api/reloj/admins", async (req, res) => {
     try { res.json(await getClockAdmins()); }

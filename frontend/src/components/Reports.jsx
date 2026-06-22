@@ -53,8 +53,7 @@ const Reports = () => {
 
   const [filters, setFilters] = useState({
     startDate: firstDayOfMonth,
-    endDate: today,
-    cargo: ''
+    endDate: today
   });
 
   const fetchReports = async () => {
@@ -84,10 +83,9 @@ const Reports = () => {
   const filteredData = useMemo(() => {
     return data.filter(item => {
       const nameMatch = (item.Empleado?.nombre || '').toLowerCase().includes(searchTerm.toLowerCase());
-      const cargoMatch = !filters.cargo || item.Empleado?.cargo === filters.cargo;
-      return nameMatch && cargoMatch;
+      return nameMatch;
     });
-  }, [data, searchTerm, filters.cargo]);
+  }, [data, searchTerm]);
 
   // Chart Data Preparation
   const chartData = useMemo(() => {
@@ -140,7 +138,7 @@ const Reports = () => {
     titleRow.height = 30;
 
     // 2. Encabezados (Fondo Verde Lima - 92D050)
-    const headerRow = worksheet.addRow(['Empleado', 'UID Reloj', 'Cargo', 'Fecha', 'Entrada', 'Salida', 'Horas Totales', 'Estado']);
+    const headerRow = worksheet.addRow(['Empleado', 'UID Reloj', 'Fecha', 'Entrada', 'Salida', 'Horas Totales', 'Estado']);
     
     headerRow.eachCell((cell) => {
       cell.font = { bold: true, name: 'Calibri', size: 11 };
@@ -164,7 +162,6 @@ const Reports = () => {
       const row = worksheet.addRow([
         item.Empleado?.nombre || 'N/A',
         item.uid_reloj,
-        item.Empleado?.cargo || 'N/A',
         item.fecha,
         formatTime(item.hora_entrada),
         formatTime(item.hora_salida),
@@ -291,23 +288,7 @@ const Reports = () => {
               </div>
             </div>
 
-            <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-1">Cargo / Área</label>
-              <div className="relative">
-                <Filter className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                <select
-                  value={filters.cargo}
-                  onChange={(e) => setFilters({...filters, cargo: e.target.value})}
-                  className="w-full pl-12 pr-4 py-3 bg-gray-50 border-none rounded-2xl font-bold text-sm focus:ring-2 focus:ring-blue-100 transition-all appearance-none cursor-pointer"
-                >
-                  <option value="">Todos los cargos</option>
-                  <option value="Conductor">Conductor</option>
-                  <option value="Operador">Operador</option>
-                  <option value="Desarrollador">Desarrollador</option>
-                  <option value="Practicante">Practicante</option>
-                </select>
-              </div>
-            </div>
+            {/* Filtro de cargos eliminado */}
           </div>
         </div>
 
@@ -319,13 +300,7 @@ const Reports = () => {
             </h3>
             <div className="h-[300px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData.trend}>
-                  <defs>
-                    <linearGradient id="colorAsist" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#2563eb" stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor="#2563eb" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
+                <BarChart data={chartData.trend} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
                   <XAxis 
                     dataKey="fecha" 
@@ -337,15 +312,18 @@ const Reports = () => {
                   <YAxis 
                     axisLine={false} 
                     tickLine={false} 
+                    allowDecimals={false}
                     tick={{fontSize: 10, fontWeight: 'bold', fill: '#9ca3af'}}
                   />
                   <Tooltip 
                     contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '12px' }}
                     labelStyle={{ fontWeight: 'black', marginBottom: '4px' }}
+                    cursor={{fill: '#f8fafc'}}
                   />
-                  <Area type="monotone" dataKey="Asistencias" stroke="#2563eb" strokeWidth={4} fillOpacity={1} fill="url(#colorAsist)" />
-                  <Area type="monotone" dataKey="Tardanzas" stroke="#f59e0b" strokeWidth={4} fillOpacity={0} />
-                </AreaChart>
+                  <Legend iconType="circle" wrapperStyle={{ fontSize: '12px', fontWeight: 'bold' }} />
+                  <Bar dataKey="Asistencias" fill="#2563eb" radius={[6, 6, 0, 0]} barSize={40} />
+                  <Bar dataKey="Tardanzas" fill="#f59e0b" radius={[6, 6, 0, 0]} barSize={40} />
+                </BarChart>
               </ResponsiveContainer>
             </div>
           </div>
@@ -402,7 +380,6 @@ const Reports = () => {
               <thead>
                 <tr className="bg-white text-gray-400 text-[10px] font-black uppercase tracking-widest">
                   <th className="px-8 py-5">Empleado</th>
-                  <th className="px-8 py-5">Área / Cargo</th>
                   <th className="px-8 py-5 text-center">Fecha</th>
                   <th className="px-8 py-5 text-center">Entrada</th>
                   <th className="px-8 py-5 text-center">Salida</th>
@@ -431,9 +408,6 @@ const Reports = () => {
                            </div>
                            <p className="font-black text-gray-900">{item.Empleado?.nombre || 'N/A'}</p>
                         </div>
-                      </td>
-                      <td className="px-8 py-6">
-                         <span className="text-xs text-gray-400 font-black uppercase tracking-tighter">{item.Empleado?.cargo || 'N/A'}</span>
                       </td>
                       <td className="px-8 py-6 text-center">
                          <span className="text-xs font-black text-gray-600">{item.fecha}</span>

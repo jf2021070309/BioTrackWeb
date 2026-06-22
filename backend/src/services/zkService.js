@@ -10,48 +10,89 @@ const LOCK_FILE_PATH = path.join(__dirname, '../../reloj.lock');
 if (!fs.existsSync(LOCK_FILE_PATH)) fs.writeFileSync(LOCK_FILE_PATH, 'LOCK');
 
 // ─── Instancia ──────────────────────────────────────────
+const DEVICE_TIMEOUT = parseInt(process.env.RELOJ_TIMEOUT || 10000, 10);
 const createDevice = () => new ZKLib(
     String(process.env.RELOJ_IP || "192.168.1.214").trim(),
     parseInt(process.env.RELOJ_PORT || 4370, 10),
-    10000
+    DEVICE_TIMEOUT
 );
 
 const UDP_COOLDOWN_MS = 5000;
 
 // ─── Wrapper principal con Lock de Archivo ──────────────
 async function withDevice(fn) {
-    let release;
-    try {
-        // Intentar obtener el lock (reintenta por 30 segundos)
-        // stale: 15000 significa que si el proceso muere, el lock caduca en 15 seg
-        release = await lockfile.lock(LOCK_FILE_PATH, { 
-            retries: { retries: 60, minTimeout: 500 },
-            stale: 15000 
-        });
+    // Añadimos reintentos para problemas transitorios de red / UDP
+    const maxAttempts = parseInt(process.env.RELOJ_RETRIES || '3', 10);
+    const retryDelay = parseInt(process.env.RELOJ_RETRY_DELAY || '2000', 10);
 
-        const zk = createDevice();
-        await zk.createSocket();
-        const result = await fn(zk);
-        
-        // Desconexión limpia
-        try { await zk.disconnect(); } catch (_) {}
-        
-        // Espera de seguridad antes de soltar el archivo (Cooldown UDP)
-        await new Promise(r => setTimeout(r, UDP_COOLDOWN_MS));
-        
-        return result;
-    } catch (err) {
-        if (err.code === 'ELOCKED') {
-            throw new Error('El reloj está siendo usado por otro proceso. Intente en unos segundos.');
+    let lastErr;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        let release;
+        try {
+            // Intentar obtener el lock (reintenta por 30 segundos)
+            // stale: 15000 significa que si el proceso muere, el lock caduca en 15 seg
+            release = await lockfile.lock(LOCK_FILE_PATH, { 
+                retries: { retries: 60, minTimeout: 500 },
+                stale: 15000 
+            });
+
+            const zk = createDevice();
+            await zk.createSocket();
+            const result = await fn(zk);
+
+            // Desconexión limpia
+            try { await zk.disconnect(); } catch (_) {}
+
+            // Espera de seguridad antes de soltar el archivo (Cooldown UDP)
+            await new Promise(r => setTimeout(r, UDP_COOLDOWN_MS));
+
+            if (release) await release();
+            return result;
+        } catch (err) {
+            lastErr = err;
+
+            // Si el lock está ocupado, no reintentamos muchas veces
+            if (err && err.code === 'ELOCKED') {
+                throw new Error('El reloj está siendo usado por otro proceso. Intente en unos segundos.');
+            }
+
+            const errMsg = (err && (err.err && err.err.message)) || (err && err.message) || '';
+            const isTimeout = typeof errMsg === 'string' && errMsg.toUpperCase().includes('TIMEOUT');
+
+            console.error(`❌ ZK Error (attempt ${attempt}/${maxAttempts}):`, errMsg || err);
+
+            // Si no es un timeout de red, no reintentamos
+            if (!isTimeout) {
+                if (release) await release();
+                throw err;
+            }
+
+            // Esperar antes de reintentar
+            if (release) await release();
+            if (attempt < maxAttempts) {
+                await new Promise(r => setTimeout(r, retryDelay));
+                console.log(`🔁 Reintentando conexión al reloj (intento ${attempt + 1})...`);
+                continue;
+            }
         }
-        console.error('❌ ZK Error:', err.message || err);
-        throw err;
-    } finally {
-        if (release) await release();
     }
+
+    console.error('❌ ZK: todos los intentos fallaron');
+    throw lastErr || new Error('Error desconocido al acceder al reloj');
 }
 
-const cleanUid = (uid) => String(uid || "").trim();
+const cleanUid = (uid) => {
+    // El reloj puede devolver caracteres de control (ej. \x0B) o espacios.
+    // Eliminamos caracteres no imprimibles y hacemos trim.
+    if (uid === null || uid === undefined) return "";
+    try {
+        return String(uid)
+            .replace(/[\x00-\x1F\x7F]/g, '') // eliminar controles ASCII
+            .trim();
+    } catch (e) {
+        return String(uid).trim();
+    }
+};
 
 // ─── Lógica de asistencia ───────────────────────────────
 const procesarAsistencias = async (uid, fecha) => {
@@ -130,39 +171,7 @@ const syncClockData = async () => {
             }
 
             // 2. Web -> Reloj (Subir empleados nuevos, editados o recuperados)
-            console.log("📤 Subiendo empleados nuevos al reloj...");
-            const pendientes = await Empleado.findAll({ where: { sincronizado_reloj: false } });
-            for (const p of pendientes) {
-                try {
-                    const uidNum = parseInt(p.uid_reloj);
-                    if (isNaN(uidNum) || uidNum <= 0 || uidNum > 3000) {
-                        console.warn(`   ⚠️ UID fuera de rango para ${p.nombre}: ${p.uid_reloj}`);
-                        continue;
-                    }
-
-                    // Validaciones según los límites reales de la librería y el hardware
-                    const nombreLimpio = String(p.nombre).trim().substring(0, 24);
-                    const userIdStr   = String(p.uid_reloj).substring(0, 9);
-                    const passStr     = String(p.password || "").substring(0, 8);
-                    const cardStr     = String(p.cardno || "0").substring(0, 10);
-                    const role        = p.rol_reloj || 0;
-
-                    console.log(`📤 Intentando subir a: ${nombreLimpio} (ID: ${uidNum})...`);
-                    
-                    // setUser(uid, userid, name, password, role, cardno)
-                    const result = await zk.setUser(uidNum, userIdStr, nombreLimpio, passStr, role, cardStr);
-                    
-                    if (result === false) {
-                        console.error(`   ❌ El reloj rechazó los datos de ${nombreLimpio} (Validación fallida en librería)`);
-                        continue;
-                    }
-
-                    console.log(`   ✅ ${nombreLimpio} guardado en el reloj.`);
-                    await p.update({ sincronizado_reloj: true });
-                } catch (e) {
-                    console.error(`   ❌ Error con ${p.nombre}:`, e.message);
-                }
-            }
+            // ELIMINADO: Ahora los usuarios solo se registran en la máquina directamente.
 
             // 3. Marcaciones -> registros_crudos
             console.log("📅 Descargando marcaciones...");
@@ -197,13 +206,16 @@ const syncClockData = async () => {
 const syncClockTime = async () => {
     return await withDevice(async (zk) => {
         const now = new Date();
-        const buf = Buffer.alloc(6);
-        buf.writeUInt8(now.getFullYear() % 100, 0);
-        buf.writeUInt8(now.getMonth() + 1, 1);
-        buf.writeUInt8(now.getDate(), 2);
-        buf.writeUInt8(now.getHours(), 3);
-        buf.writeUInt8(now.getMinutes(), 4);
-        buf.writeUInt8(now.getSeconds(), 5);
+        const timeEncoded = ((((now.getFullYear() - 2000) * 12 +
+            now.getMonth()) * 31 +
+            now.getDate() - 1) * 24 +
+            now.getHours()) * 60 * 60 +
+            now.getMinutes() * 60 +
+            now.getSeconds();
+            
+        const buf = Buffer.alloc(4);
+        buf.writeUInt32LE(timeEncoded, 0);
+        
         await zk.executeCmd(202, buf);
         return now;
     });
@@ -229,29 +241,11 @@ const importUsers = async () => {
     } catch { return false; }
 };
 
-const updateClockUser = async (userId, name, password, role, cardno) => {
-    return await withDevice(async (zk) => {
-        const uid = parseInt(userId) || 100;
-        await zk.setUser(uid, userId, name, password, role, cardno);
-        return true;
-    });
-};
-
-const deleteClockUser = async (uid) => {
-    return await withDevice(async (zk) => {
-        const uidNum = parseInt(uid) || 0;
-        const buf = Buffer.alloc(2);
-        buf.writeUInt16LE(uidNum, 0);
-        await zk.executeCmd(100, buf);
-        return true;
-    });
-};
+// Funciones updateClockUser y deleteClockUser eliminadas (solo lectura)
 
 module.exports = {
     syncClockData,
     syncClockTime,
     getClockUsers,
-    importUsers,
-    updateClockUser,
-    deleteClockUser
+    importUsers
 };

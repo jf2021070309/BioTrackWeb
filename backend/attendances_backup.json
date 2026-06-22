@@ -1,0 +1,34 @@
+[
+  {
+    "userSn": 1,
+    "deviceUserId": "1",
+    "recordTime": "Tue May 19 2026 15:20:30 GMT-0500 (hora estándar de Perú)",
+    "extraField1": 0,
+    "extraField2": 0,
+    "ip": "192.168.1.215"
+  },
+  {
+    "userSn": 0,
+    "deviceUserId": "",
+    "recordTime": "Sat Jan 01 2000 00:00:00 GMT-0500 (hora estándar de Perú)",
+    "extraField1": 1,
+    "extraField2": 12544,
+    "ip": "192.168.1.215"
+  },
+  {
+    "userSn": 0,
+    "deviceUserId": "",
+    "recordTime": "Sat Jan 01 2000 00:00:00 GMT-0500 (hora estándar de Perú)",
+    "extraField1": 0,
+    "extraField2": 0,
+    "ip": "192.168.1.215"
+  },
+  {
+    "userSn": 14835,
+    "deviceUserId": "\u000b2",
+    "recordTime": "Sat Jan 01 2000 00:00:00 GMT-0500 (hora estándar de Perú)",
+    "extraField1": 0,
+    "extraField2": 0,
+    "ip": "192.168.1.215"
+  }
+]
