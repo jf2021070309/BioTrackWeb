@@ -1,5 +1,5 @@
 const ZKLib = require('zklib-js-zkteko');
-const { AsistenciaProcesada, Empleado, RegistroCrudo } = require("../models");
+const { AsistenciaProcesada, Empleado, RegistroCrudo, RolJornada } = require("../models");
 const { Op } = require("sequelize");
 const lockfile = require('proper-lockfile');
 const path = require('path');
@@ -97,7 +97,10 @@ const cleanUid = (uid) => {
 // ─── Lógica de asistencia ───────────────────────────────
 const procesarAsistencias = async (uid, fecha) => {
     try {
-        const emp = await Empleado.findOne({ where: { uid_reloj: uid } });
+        const emp = await Empleado.findOne({ 
+            where: { uid_reloj: uid },
+            include: [RolJornada]
+        });
         if (!emp) return;
 
         const [y, m, d] = fecha.split("-").map(Number);
@@ -112,26 +115,41 @@ const procesarAsistencias = async (uid, fecha) => {
         if (!registros.length) return;
 
         const entrada = registros[0].timestamp;
-        const salida  = registros[registros.length - 1].timestamp;
-        const diffHrs = (salida - entrada) / (1000 * 60 * 60);
+        const tieneSalida = registros.length >= 2;
+        const salida = tieneSalida ? registros[registros.length - 1].timestamp : null;
 
-        const cargo = (emp.cargo || "").toLowerCase();
-        const horasReq = cargo.includes("practicante") ? 6 : 8;
-        const esTarde  = entrada.getHours() > 8 ||
-                        (entrada.getHours() === 8 && entrada.getMinutes() > 5);
+        let tolerancia = 5;
+        let schedHoraEntrada = "08:00:00";
 
-        let estado = "PRESENTE";
-        if (esTarde) estado = "TARDE";
-        if (registros.length === 1) estado = "INCOMPLETO";
+        if (emp.RolJornada) {
+            schedHoraEntrada = emp.RolJornada.hora_entrada_1 || "08:00:00";
+            tolerancia = emp.RolJornada.tolerancia_minutos !== undefined ? emp.RolJornada.tolerancia_minutos : 5;
+        }
+
+        const [schedHour, schedMin] = schedHoraEntrada.split(":").map(Number);
+        const entradaMinutos = entrada.getHours() * 60 + entrada.getMinutes();
+        const schedMinutos = schedHour * 60 + schedMin;
+        const limiteMinutos = schedMinutos + tolerancia;
+
+        const esTarde = entradaMinutos > limiteMinutos;
+        const minutosTardanza = esTarde ? entradaMinutos - schedMinutos : 0;
+
+        let estado = "FALTA_SALIDA";
+        if (tieneSalida) {
+            estado = esTarde ? "TARDE" : "PRESENTE";
+        }
+
+        const diffHrs = tieneSalida ? (salida - entrada) / (1000 * 60 * 60) : 0;
 
         const datos = {
             uid_reloj: uid,
             fecha,
             hora_entrada: entrada,
-            hora_salida: registros.length > 1 ? salida : null,
-            horas_totales: registros.length > 1 ? parseFloat(diffHrs.toFixed(2)) : 0,
+            hora_salida: salida,
+            horas_totales: tieneSalida ? parseFloat(diffHrs.toFixed(2)) : 0,
             estado,
-            cumplio_jornada: diffHrs >= horasReq
+            minutos_tardanza: minutosTardanza,
+            cumplio_jornada: false
         };
 
         const [asist, created] = await AsistenciaProcesada.findOrCreate({
@@ -140,7 +158,7 @@ const procesarAsistencias = async (uid, fecha) => {
         });
         if (!created) await asist.update(datos);
 
-        console.log(`${created ? '✨ CREADA' : '✅ ACTUALIZADA'} asistencia UID ${uid}`);
+        console.log(`${created ? '✨ CREADA' : '✅ ACTUALIZADA'} asistencia UID ${uid} - Estado: ${estado}`);
     } catch (e) {
         console.error(`❌ procesarAsistencias UID ${uid}:`, e.message);
     }
@@ -228,6 +246,15 @@ const getClockUsers = async () => {
     });
 };
 
+const getClockAdmins = async () => {
+    try {
+        const users = await getClockUsers();
+        return (users || []).filter(u => u.role === 14 || u.role === 3 || u.privilege === 14);
+    } catch {
+        return [];
+    }
+};
+
 const importUsers = async () => {
     try {
         const users = await getClockUsers();
@@ -247,5 +274,6 @@ module.exports = {
     syncClockData,
     syncClockTime,
     getClockUsers,
+    getClockAdmins,
     importUsers
 };

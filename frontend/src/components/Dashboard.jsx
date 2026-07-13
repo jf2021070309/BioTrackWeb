@@ -1,5 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
+import ExcelJS from "exceljs";
+import { saveAs } from "file-saver";
+import { toast } from "sonner";
 import {
   AlertTriangle,
   CalendarDays,
@@ -53,19 +56,15 @@ const formatDateTime = (value) => {
 };
 
 const getEstado = (asistencia) => {
-  const estadoBackend = asistencia.estado || "PRESENTE";
+  const estadoBackend = asistencia.estado || "FALTA_SALIDA";
   
   const map = {
-    "PRESENTE": { label: "Presente", className: "bg-blue-100 text-blue-700", icon: UserCheck },
-    "CUMPLIO": { label: "Cumplió", className: "bg-green-100 text-green-700", icon: CheckCircle },
-    "TARDE": { label: "Tarde", className: "bg-red-100 text-red-700", icon: Clock },
-    "SALIDA_TEMPRANA": { label: "Salida temprana", className: "bg-orange-100 text-orange-700", icon: TimerReset },
-    "NO_CUMPLIO": { label: "Incompleto", className: "bg-amber-100 text-amber-700", icon: AlertTriangle },
-    "INCOMPLETO": { label: "Falta Salida", className: "bg-amber-100 text-amber-700", icon: AlertTriangle },
-    "AUSENTE": { label: "Ausente", className: "bg-red-100 text-red-700", icon: XCircle }
+    "PRESENTE":    { label: "Presente",     className: "bg-blue-100 text-blue-700",   icon: UserCheck },
+    "TARDE":       { label: "Tarde",         className: "bg-red-100 text-red-700",     icon: AlertTriangle },
+    "FALTA_SALIDA":{ label: "Falta Salida", className: "bg-amber-100 text-amber-700", icon: Clock },
   };
 
-  return map[estadoBackend] || map["PRESENTE"];
+  return map[estadoBackend] || map["FALTA_SALIDA"];
 };
 
 const formatDecimalHours = (decimal) => {
@@ -127,6 +126,95 @@ const Dashboard = ({
       .sort((a, b) => new Date(a.hora_entrada || 0) - new Date(b.hora_entrada || 0));
   }, [asistencias, searchTerm]);
 
+  const exportToExcel = async () => {
+    if (filteredAsistencias.length === 0) {
+      toast.error("No hay datos para exportar en la fecha seleccionada.");
+      return;
+    }
+
+    try {
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Asistencia');
+
+      // 1. Título (Fondo Amarillo - FFFF00)
+      const titleRow = worksheet.addRow([`REPORTE DE ASISTENCIA DIARIA - FECHA: ${selectedDate}`]);
+      
+      worksheet.mergeCells('A1:G1');
+      titleRow.getCell(1).font = { bold: true, size: 12, name: 'Calibri' };
+      titleRow.getCell(1).fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFFFFF00' } // Amarillo puro
+      };
+      titleRow.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+      titleRow.getCell(1).border = {
+        top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' }
+      };
+      titleRow.height = 30;
+
+      // 2. Encabezados (Fondo Verde Lima - 92D050)
+      const headerRow = worksheet.addRow(['Empleado', 'UID Reloj', 'Fecha', 'Entrada', 'Salida', 'Horas Totales', 'Estado']);
+      
+      headerRow.eachCell((cell) => {
+        cell.font = { bold: true, name: 'Calibri', size: 11 };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FF92D050' } // Verde Lima exacto
+        };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: { style: 'thin' },
+          right: { style: 'thin' }
+        };
+      });
+      headerRow.height = 20;
+
+      // 3. Datos (Con bordes negros)
+      filteredAsistencias.forEach(item => {
+        const row = worksheet.addRow([
+          item.Empleado?.nombre || 'N/A',
+          item.uid_reloj,
+          item.fecha,
+          formatTime(item.hora_entrada),
+          formatTime(item.hora_salida),
+          item.horas_totales || '0.00',
+          getEstado(item).label
+        ]);
+        
+        row.eachCell((cell) => {
+          cell.border = {
+            top: { style: 'thin' },
+            left: { style: 'thin' },
+            bottom: { style: 'thin' },
+            right: { style: 'thin' }
+          };
+          cell.alignment = { vertical: 'middle', horizontal: cell.column === 1 ? 'left' : 'center' };
+        });
+      });
+
+      // 4. Ajustar anchos
+      worksheet.getColumn(1).width = 30;
+      worksheet.getColumn(2).width = 12;
+      worksheet.getColumn(3).width = 25;
+      worksheet.getColumn(4).width = 15;
+      worksheet.getColumn(5).width = 12;
+      worksheet.getColumn(6).width = 12;
+      worksheet.getColumn(7).width = 15;
+
+      // 5. Descargar
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      saveAs(blob, `Reporte_Asistencia_${selectedDate}.xlsx`);
+      toast.success("Reporte Excel descargado correctamente");
+    } catch (e) {
+      console.error(e);
+      toast.error("Error al exportar a Excel: " + e.message);
+    }
+  };
+
   return (
     <div className="p-8 font-sans bg-gray-50 min-h-screen">
       {/* Header Premium */}
@@ -164,6 +252,14 @@ const Dashboard = ({
             >
               <RefreshCw size={18} className={`mr-2 ${loadingSync ? "animate-spin" : ""}`} />
               {loadingSync ? "Procesando..." : "Sincronizar Marcaciones"}
+            </button>
+
+            <button
+               onClick={exportToExcel}
+               className="bg-emerald-600 text-white px-6 py-3 rounded-2xl font-black text-sm hover:bg-emerald-700 shadow-xl transition-all flex items-center hover:scale-105 active:scale-95"
+             >
+               <FileDown size={18} className="mr-2" />
+               Exportar Excel
             </button>
           </div>
         </div>

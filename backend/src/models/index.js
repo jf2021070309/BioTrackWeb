@@ -33,13 +33,25 @@ const AsistenciaProcesada = sequelize.define("AsistenciaProcesada", {
     hora_salida: DataTypes.DATE,
     horas_totales: DataTypes.DECIMAL(5, 2),
     cumplio_jornada: DataTypes.BOOLEAN,
-    estado: { type: DataTypes.ENUM("PRESENTE", "CUMPLIO", "TARDE", "SALIDA_TEMPRANA", "NO_CUMPLIO", "INCOMPLETO", "AUSENTE"), defaultValue: "PRESENTE" },
+    estado: { type: DataTypes.ENUM("PRESENTE", "TARDE", "FALTA_SALIDA"), defaultValue: "FALTA_SALIDA" },
     minutos_tardanza: { type: DataTypes.INTEGER, defaultValue: 0 },
     minutos_salida_temprana: { type: DataTypes.INTEGER, defaultValue: 0 }
 }, { tableName: "asistencias_procesadas", timestamps: false });
+
+const RolJornada = sequelize.define("RolJornada", {
+    nombre: { type: DataTypes.STRING, allowNull: false },
+    hora_entrada_1: { type: DataTypes.TIME, allowNull: false },
+    hora_salida_1: { type: DataTypes.TIME, allowNull: false },
+    hora_entrada_2: { type: DataTypes.TIME, allowNull: true },
+    hora_salida_2: { type: DataTypes.TIME, allowNull: true },
+    tolerancia_minutos: { type: DataTypes.INTEGER, defaultValue: 0 }
+}, { tableName: "roles_jornada", timestamps: false });
 
 Empleado.hasMany(RegistroCrudo, { foreignKey: "uid_reloj", sourceKey: "uid_reloj" });
 Empleado.hasMany(AsistenciaProcesada, { foreignKey: "uid_reloj", sourceKey: "uid_reloj" });
 AsistenciaProcesada.belongsTo(Empleado, { foreignKey: "uid_reloj", targetKey: "uid_reloj" });
 
-module.exports = { sequelize, Empleado, RegistroCrudo, AsistenciaProcesada };
+Empleado.belongsTo(RolJornada, { foreignKey: "rol_jornada_id" });
+RolJornada.hasMany(Empleado, { foreignKey: "rol_jornada_id" });
+
+module.exports = { sequelize, Empleado, RegistroCrudo, AsistenciaProcesada, RolJornada };

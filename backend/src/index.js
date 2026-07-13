@@ -3,7 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const swaggerUi = require("swagger-ui-express");
 const swaggerJsdoc = require("swagger-jsdoc");
-const { sequelize, AsistenciaProcesada, Empleado, RegistroCrudo } = require("./models");
+const { sequelize, AsistenciaProcesada, Empleado, RegistroCrudo, RolJornada } = require("./models");
 const { syncClockData, importUsers, getClockAdmins, syncClockTime, getClockUsers } = require("./services/zkService");
 
 const app = express();
@@ -48,7 +48,18 @@ app.get("/", (req, res) => {
 });
 
 app.get("/api/empleados", async (req, res) => {
-    res.json(await Empleado.findAll({ order: [["uid_reloj", "ASC"]] }));
+    res.json(await Empleado.findAll({ 
+        include: [RolJornada],
+        order: [["uid_reloj", "ASC"]] 
+    }));
+});
+
+app.get("/api/roles-jornada", async (req, res) => {
+    try {
+        res.json(await RolJornada.findAll({ order: [["id", "ASC"]] }));
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
 app.post("/api/empleados", async (req, res) => {
@@ -64,8 +75,57 @@ app.put("/api/empleados/:id", async (req, res) => {
         const empleado = await Empleado.findByPk(req.params.id);
         if (!empleado) return res.status(404).json({ error: "No encontrado" });
         
+        let rol_jornada_id = req.body.rol_jornada_id;
+        let use_custom = req.body.use_custom_schedule;
+        
+        if (!use_custom && rol_jornada_id && rol_jornada_id !== "custom") {
+            const requested_tol = req.body.tolerancia_minutos ? parseInt(req.body.tolerancia_minutos, 10) : 0;
+            const existingRol = await RolJornada.findByPk(rol_jornada_id);
+            if (existingRol && existingRol.tolerancia_minutos !== requested_tol) {
+                use_custom = true;
+                req.body.hora_entrada_1 = existingRol.hora_entrada_1;
+                req.body.hora_salida_1 = existingRol.hora_salida_1;
+                req.body.hora_entrada_2 = existingRol.hora_entrada_2;
+                req.body.hora_salida_2 = existingRol.hora_salida_2;
+            }
+        }
+        
+        if (use_custom) {
+            const { hora_entrada_1, hora_salida_1, hora_entrada_2, hora_salida_2, tolerancia_minutos } = req.body;
+            // Normalize empty strings to null
+            const h_ent_2 = hora_entrada_2 ? hora_entrada_2 : null;
+            const h_sal_2 = hora_salida_2 ? hora_salida_2 : null;
+            const tol = tolerancia_minutos ? parseInt(tolerancia_minutos, 10) : 0;
+            
+            let rol = await RolJornada.findOne({
+                where: {
+                    hora_entrada_1,
+                    hora_salida_1,
+                    hora_entrada_2: h_ent_2,
+                    hora_salida_2: h_sal_2,
+                    tolerancia_minutos: tol
+                }
+            });
+            
+            if (!rol) {
+                let nombre_rol = `Turno: ${hora_entrada_1.substring(0,5)}-${hora_salida_1.substring(0,5)}`;
+                if (h_ent_2 && h_sal_2) {
+                    nombre_rol += ` y ${h_ent_2.substring(0,5)}-${h_sal_2.substring(0,5)}`;
+                }
+                rol = await RolJornada.create({
+                    nombre: nombre_rol,
+                    hora_entrada_1,
+                    hora_salida_1,
+                    hora_entrada_2: h_ent_2,
+                    hora_salida_2: h_sal_2,
+                    tolerancia_minutos: tol
+                });
+            }
+            rol_jornada_id = rol.id;
+        }
+
         // Solo edita en la base de datos local
-        const data = { ...req.body, sincronizado_reloj: true };
+        const data = { ...req.body, rol_jornada_id, sincronizado_reloj: true };
         await empleado.update(data);
         res.json(empleado);
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -159,6 +219,16 @@ app.post("/api/sync", async (req, res) => {
 app.post("/api/importar-empleados", async (req, res) => {
     const success = await importUsers();
     res.json({ message: success ? "Ok" : "Error" });
+});
+
+app.post("/api/login", (req, res) => {
+    const { password } = req.body;
+    const adminPassword = process.env.ADMIN_PASSWORD || "admin123";
+    if (password === adminPassword) {
+        res.json({ success: true });
+    } else {
+        res.status(401).json({ error: "Contraseña incorrecta" });
+    }
 });
 
 const PORT = process.env.PORT || 5000;

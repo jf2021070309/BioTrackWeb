@@ -4,9 +4,11 @@ import { Toaster, toast } from "sonner";
 import Dashboard from "./components/Dashboard";
 import Employees from "./components/Employees";
 import Reports from "./components/Reports";
+import Login from "./components/Login";
 
 function App() {
   const [view, setView] = useState("dashboard");
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [asistencias, setAsistencias] = useState([]);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10));
   const [loadingSync, setLoadingSync] = useState(false);
@@ -84,8 +86,10 @@ function App() {
       <Toaster richColors position="top-right" />
       <nav className="bg-white border-b p-4 flex justify-center space-x-8 shadow-sm">
           <button onClick={() => setView("dashboard")} className={`font-bold transition-all ${view === "dashboard" ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-400"}`}>Dashboard</button>
-          <button onClick={() => setView("employees")} className={`font-bold transition-all ${view === "employees" ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-400"}`}>Personal</button>
           <button onClick={() => setView("reports")} className={`font-bold transition-all ${view === "reports" ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-400"}`}>Reportes</button>
+          <button onClick={() => setView("employees")} className={`font-bold transition-all flex items-center gap-1 ${view === "employees" ? "text-blue-600 border-b-2 border-blue-600" : "text-gray-400"}`}>
+            Panel Admin {isAuthenticated && <span className="w-2 h-2 rounded-full bg-green-500"></span>}
+          </button>
       </nav>
       <div className="max-w-7xl mx-auto">
         {view === "dashboard" && (
@@ -102,8 +106,18 @@ function App() {
             error={error}
           />
         )}
-        {view === "employees" && <Employees onBack={() => setView("dashboard")} />}
+
         {view === "reports" && <Reports />}
+
+        {view === "employees" && (
+          isAuthenticated ? (
+            <div className="p-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              <Employees />
+            </div>
+          ) : (
+            <Login onLoginSuccess={() => setIsAuthenticated(true)} />
+          )
+        )}
       </div>
     </div>
   );
